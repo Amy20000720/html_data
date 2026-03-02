@@ -75,6 +75,63 @@ def print_distribution(counter: Counter, top_n: int = 50):
         print(f"  {w} x {h}  ->  {cnt}  ({pct:.2f}%)")
 
 
+def write_report_md(counter: Counter, report_path: Path, top_table: int = 50, top_chart: int = 20):
+    """生成 MD 报告：表格 + Mermaid 图。"""
+    if not counter:
+        report_path.write_text("# Resolution Report\n\nNo data.\n", encoding="utf-8")
+        return
+    total = sum(counter.values())
+    rows = counter.most_common(top_table)
+    lines = [
+        "# HTML 图片分辨率统计报告",
+        "",
+        f"- **总图片引用数**: {total}",
+        f"- **不同分辨率数**: {len(counter)}",
+        "",
+        "## 分辨率分布表",
+        "",
+        "| 分辨率 (宽×高) | 出现次数 | 占比 |",
+        "|----------------|----------|------|",
+    ]
+    for (w, h), cnt in rows:
+        pct = 100.0 * cnt / total
+        lines.append(f"| {w} × {h} | {cnt} | {pct:.2f}% |")
+    lines.extend(["", "## 分布图（前 {} 项）".format(top_chart), ""])
+
+    # Mermaid 柱状图（取前 top_chart 项）
+    chart_items = counter.most_common(top_chart)
+    labels = [f"{w}×{h}" for (w, h), _ in chart_items]
+    values = [c for _, c in chart_items]
+    # Mermaid 对标签中特殊字符敏感，用引号包起来
+    labels_escaped = [f'"{s}"' for s in labels]
+    lines.append("```mermaid")
+    lines.append("xychart-beta")
+    lines.append('    title "Resolution distribution (top {})"'.format(top_chart))
+    lines.append("    x-axis " + ", ".join(labels_escaped))
+    lines.append('    y-axis "Count" 0 --> ' + str(max(values) + 1))
+    lines.append("    bar " + str(values))
+    lines.append("```")
+    lines.append("")
+
+    # Mermaid 饼图（前 10 项，其余归为 Other）
+    pie_n = min(10, len(chart_items))
+    pie_items = chart_items[:pie_n]
+    other_cnt = total - sum(c for _, c in pie_items)
+    lines.append("## 占比饼图（前 {} 项）".format(pie_n))
+    lines.append("")
+    lines.append("```mermaid")
+    lines.append("pie title Resolution share (top {})".format(pie_n))
+    for (w, h), cnt in pie_items:
+        pct = 100.0 * cnt / total
+        lines.append('    "{}" : {}'.format(f"{w}×{h}", cnt))
+    if other_cnt > 0:
+        lines.append('    "Other" : {}'.format(other_cnt))
+    lines.append("```")
+    lines.append("")
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def main():
     p = argparse.ArgumentParser(description="统计 HTML 内图片分辨率分布")
     p.add_argument("--html-dir", type=Path, default=Path("html"),
@@ -83,12 +140,17 @@ def main():
                    help="仅处理前 N 个文件，用于小批量验证（如 10）")
     p.add_argument("--top", type=int, default=50, help="打印前 N 个分辨率，默认 50")
     p.add_argument("--no-progress", action="store_true", help="不显示进度条")
+    p.add_argument("--report", type=Path, default=None, metavar="FILE.md",
+                   help="输出 MD 报告（含表格与 Mermaid 图）")
     args = p.parse_args()
     if not args.html_dir.is_dir():
         print(f"Dir not found: {args.html_dir}")
         return 1
     counter = run_stats(args.html_dir, limit=args.limit, progress=not args.no_progress)
     print_distribution(counter, top_n=args.top)
+    if args.report is not None:
+        write_report_md(counter, args.report, top_table=args.top, top_chart=min(20, args.top))
+        print("Report written: {}".format(args.report))
     return 0
 
 
